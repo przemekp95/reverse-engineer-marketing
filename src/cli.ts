@@ -28,6 +28,8 @@ Usage
   rem google-estimate <AR…> [AR…]  estimate Google scan bytes without executing the query
   rem google-link <domain> <AR…> [AR…]  save verified Google advertiser IDs for this domain
   rem google-fetch <domain> [domain…]  jointly fetch and locally save Google ads for competitors
+  rem keywords <phrase> [phrase…]  research Google keyword ideas directly (--url also supported)
+  rem keywords-check        check real Google keyword-planning API access
   rem doctor                show which sources your keys unlock
   rem setup                 connect REM to Claude Code / Codex (shows the plan, asks first)
   rem diff <domain>         what changed since the previous run (or: rem diff <runA> <runB>)
@@ -41,6 +43,13 @@ Options
   --handle <platform=name>  override a discovered handle, e.g. --handle tiktok=notionhq
   --model <id>              Claude model for the report (default claude-opus-5)
   --google-advertiser <AR…>  target-specific Google advertiser ID (repeat for multiple IDs)
+  --keyword <phrase>        add keyword market research to a report (repeatable, opt-in)
+  --keyword-limit <n>       bound report keyword ideas (default 100, max 1000)
+  --customer <id>           keywords: Google Ads customer ID, not an AR advertiser ID
+  --language <id>           keywords: language constant (default 1030, Polish)
+  --geo <id>                keywords: location constant (repeatable; default 2616, Poland)
+  --limit <n>               keywords: maximum ideas (default 100, max 1000)
+  --url <url>               keywords: public URL seed, optionally with seed phrases
   --max-credits <n>         Scrape Creators budget per run (default 50)
   --port <n>                web app port (default 4321)
   --client <list>           setup: claude_code,codex (default: all detected)
@@ -85,6 +94,21 @@ async function main(argv: string[]): Promise<number> {
     } catch { throw new Error("Google BigQuery estimate failed. Check project, ADC, BigQuery API, IAM, advertiser IDs and byte-cap configuration."); }
     return 0;
   }
+  if (cmd === "keywords" || cmd === "keywords-check") {
+    const { researchKeywords, checkKeywordAccess } = await import("./keywords/index.js");
+    const options = { keywords: args._.slice(1).length ? args._.slice(1) : undefined, url: args.url,
+      customerId: args.customer, languageId: args.language, geoTargetIds: args.geo,
+      limit: args.limit === undefined ? undefined : Number(args.limit), refresh: Boolean(args.refresh) };
+    if (cmd === "keywords-check") {
+      const result = await checkKeywordAccess(options);
+      console.log(JSON.stringify(result, null, 2));
+      return result.available ? 0 : 1;
+    }
+    if (!options.keywords?.length && !options.url) throw new Error("usage: rem keywords <phrase> [phrase…] [--url <public-url>]");
+    try { console.log(JSON.stringify(await researchKeywords(options), null, 2)); }
+    catch { throw new Error("Google keyword research failed. Run rem keywords-check; verify planning access, account configuration and request parameters. No paid intermediary was used."); }
+    return 0;
+  }
   if (cmd === "google-fetch") {
     const domains = args._.slice(1);
     if (!domains.length) throw new Error("usage: rem google-fetch <domain> [domain…] [--dry-run] [--refresh]");
@@ -117,7 +141,7 @@ async function main(argv: string[]): Promise<number> {
   const handles = Object.fromEntries(([] as string[]).concat(args.handle ?? []).map(h => h.split("=") as [string, string]).filter(([k, v]) => k && v));
 
   const t0 = Date.now();
-  const bundle = await reverseEngineer(cmd, { only, handles, googleAdvertiserIds: args["google-advertiser"], maxCredits: args["max-credits"] ? Number(args["max-credits"]) : undefined, log });
+  const bundle = await reverseEngineer(cmd, { only, handles, googleAdvertiserIds: args["google-advertiser"], keywordResearch: args.keyword ? { keywords: args.keyword, limit: args["keyword-limit"] === undefined ? undefined : Number(args["keyword-limit"]) } : undefined, maxCredits: args["max-credits"] ? Number(args["max-credits"]) : undefined, log });
   log(`✓ ${bundle.evidence.length} evidence items, ${bundle.unknowns.length} unknowns in ${((Date.now() - t0) / 1000).toFixed(1)}s${bundle.credits.scrapecreators != null ? ` (${bundle.credits.scrapecreators} credits)` : ""}`);
 
   if (args.json) {
@@ -163,6 +187,7 @@ function doctor(): number {
   row(true, "free sources", "website, pixels + GTM, SEO/sitemaps, AI-crawler stance, Wayback history, App Store/Play, Hacker News");
   row(sc, "SCRAPECREATORS_API_KEY", sc ? "Meta/LinkedIn ad libraries, TikTok/IG/YouTube/X/LinkedIn stats, founders, Reddit, Product Hunt" : "not set — Meta/LinkedIn/social/founders become manual-check links (https://scrapecreators.com)");
   row(Boolean(process.env.REM_BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT), "Google BigQuery", "official EEA/Turkey Google ads; requires project + ADC + target advertiser IDs (credentials/access not checked)");
+  row(Boolean(process.env.REM_GOOGLE_ADS_CUSTOMER_ID), "Google keyword research", "direct Google Ads API; planning access not verified — run rem keywords-check");
   row(ai, "ANTHROPIC_API_KEY", ai ? `written strategy report (${process.env.REM_MODEL ?? "claude-opus-5"})` : "not set — CLI writes the evidence report; via MCP your agent writes the strategy");
   return 0;
 }
@@ -223,7 +248,7 @@ function parseArgs(argv: string[]): Args {
       else {
         const v = inline ?? argv[++i];
         if (v === undefined) throw new Error(`--${k} needs a value`);
-        out[k] = k === "handle" || k === "google-advertiser" ? [...(out[k] ?? []), v] : v;
+        out[k] = k === "handle" || k === "google-advertiser" || k === "keyword" || k === "geo" ? [...(out[k] ?? []), v] : v;
       }
     } else out._.push(a);
   }
