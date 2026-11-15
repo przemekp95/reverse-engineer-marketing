@@ -33,6 +33,8 @@ export interface RunOptions {
   /** Limit to some areas (website always runs: it discovers handles for the rest). */
   only?: Area[];
   maxCredits?: number;
+  /** Selected advertiser identities for this target; official Google BigQuery, EEA/Turkey only. */
+  googleAdvertiserIds?: string[];
   /** Override discovered handles, e.g. { tiktok: "notionhq" }. */
   handles?: Ctx["found"]["socials"];
   log?: (msg: string) => void;
@@ -65,7 +67,7 @@ export async function reverseEngineer(input: string, opts: RunOptions = {}): Pro
   const store = new EvidenceStore();
   const sc = scrapeCreatorsFromEnv(opts.maxCredits ?? Number(process.env.REM_MAX_CREDITS ?? 50));
   const log = opts.log ?? (() => {});
-  const ctx: Ctx = { target, store, sc, log, content: [], found: { socials: { ...opts.handles }, people: [], appStoreIds: [], playIds: [], logos: [], founderHints: [] } };
+  const ctx: Ctx = { target, store, sc, googleAdvertiserIds: opts.googleAdvertiserIds, log, content: [], found: { socials: { ...opts.handles }, people: [], appStoreIds: [], playIds: [], logos: [], founderHints: [] } };
   const want = (a: Area) => !opts.only?.length || opts.only.includes(a);
   const stage = opts.onStage ?? (() => {});
   const timed = async (name: "website" | Area, labels: string[], fn: () => Promise<void>) => {

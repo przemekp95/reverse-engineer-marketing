@@ -51,7 +51,7 @@ function bundleView(b: EvidenceBundle) {
   };
 }
 
-async function startJob(body: { url: string; engine: EngineId; model?: string; only?: Area[]; handles?: Record<string, string> }): Promise<Job> {
+async function startJob(body: { url: string; engine: EngineId; model?: string; only?: Area[]; handles?: Record<string, string>; googleAdvertiserIds?: string[] }): Promise<Job> {
   const job: Job = { id: randomUUID().slice(0, 8), events: [], listeners: new Set(), done: false, abort: new AbortController() };
   jobs.set(job.id, job);
   void (async () => {
@@ -60,6 +60,7 @@ async function startJob(body: { url: string; engine: EngineId; model?: string; o
       const bundle = await reverseEngineer(body.url, {
         only: body.only?.filter(a => AREAS.includes(a)),
         handles: body.handles,
+        googleAdvertiserIds: body.googleAdvertiserIds,
         log: msg => emit(job, { type: "log", msg }),
         onStage: (stage, state, detail) => emit(job, { type: "stage", stage, state, detail }),
       });

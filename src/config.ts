@@ -8,6 +8,8 @@ const FILE = join(DIR, "config.json");
 
 export interface UserConfig {
   scrapecreatorsKey?: string;
+  /** User-verified domain → Google Ads advertiser IDs (not credentials). */
+  googleAdvertisers?: Record<string, string[]>;
 }
 
 export function readConfig(): UserConfig {

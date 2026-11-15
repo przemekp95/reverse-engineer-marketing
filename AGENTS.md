@@ -32,4 +32,4 @@ Scrape Creators calls go through `ScrapeCreators.get` (budgeted + 24h cache). As
 
 ## Checks
 
-`npm run typecheck && npm test && npm run eval` before a PR. Don't commit `rem-reports/`, keys, or `dist/`.
+`./.codex/verify` before a PR (typecheck, tests, recorded eval, build). The Codex Stop hook and GitHub Actions call this same gate; hook loading requires project trust. Don't commit `rem-reports/`, keys, or `dist/`.

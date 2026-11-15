@@ -3,7 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { synthesize } from "./analyze/synthesize.js";
-import { applyConfig } from "./config.js";
+import { applyConfig, readConfig, writeConfig } from "./config.js";
+import { advertiserIdsForDomain, estimateGoogleAdsScan } from "./sources/google-ads.js";
+import { parseTarget } from "./target.js";
 import { AREAS, reverseEngineer, VERSION, type Area } from "./index.js";
 import { renderMarkdown } from "./report/markdown.js";
 import { validateReport } from "./report/validate.js";
@@ -23,6 +25,8 @@ Usage
   rem <url>                 website, App Store or Google Play link
   rem web                   open the local web app (uses your Claude Code / Codex plan)
   rem mcp                   run the MCP server (stdio) for Claude Code, Codex, Cursor…
+  rem google-estimate <AR…> [AR…]  estimate Google scan bytes without executing the query
+  rem google-link <domain> <AR…> [AR…]  save verified Google advertiser IDs for this domain
   rem doctor                show which sources your keys unlock
   rem setup                 connect REM to Claude Code / Codex (shows the plan, asks first)
   rem diff <domain>         what changed since the previous run (or: rem diff <runA> <runB>)
@@ -35,6 +39,7 @@ Options
   --only <areas>            comma list: ${AREAS.join(",")}
   --handle <platform=name>  override a discovered handle, e.g. --handle tiktok=notionhq
   --model <id>              Claude model for the report (default claude-opus-5)
+  --google-advertiser <AR…>  target-specific Google advertiser ID (repeat for multiple IDs)
   --max-credits <n>         Scrape Creators budget per run (default 50)
   --port <n>                web app port (default 4321)
   --client <list>           setup: claude_code,codex (default: all detected)
@@ -42,7 +47,7 @@ Options
   --no-open                 don't open the browser for rem web
   -q, --quiet               no progress output
 
-Keys (all optional): SCRAPECREATORS_API_KEY, ANTHROPIC_API_KEY — see .env.example`;
+Sources (optional): REM_BIGQUERY_PROJECT_ID + Google ADC for Google ads; SCRAPECREATORS_API_KEY for other paid/social sources; ANTHROPIC_API_KEY for reports — see .env.example`;
 
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
@@ -68,6 +73,23 @@ async function main(argv: string[]): Promise<number> {
     return -1;
   }
   if (cmd === "doctor") return doctor();
+  if (cmd === "google-estimate") {
+    const ids = advertiserIdsForDomain(undefined, args._.slice(1));
+    if (!ids.length) throw new Error("usage: rem google-estimate <AR…> [AR…]");
+    try {
+      const estimate = await estimateGoogleAdsScan(ids);
+      console.log(JSON.stringify({ dryRun: true, ...estimate, note: "No ad query executed. Raising the cap can incur BigQuery charges after the free tier is exhausted." }, null, 2));
+    } catch { throw new Error("Google BigQuery estimate failed. Check project, ADC, BigQuery API, IAM, advertiser IDs and byte-cap configuration."); }
+    return 0;
+  }
+  if (cmd === "google-link") {
+    const target = parseTarget(args._[1] ?? "");
+    const ids = advertiserIdsForDomain(target.domain, args._.slice(2));
+    if (target.kind !== "website" || !target.domain || !ids.length) throw new Error("usage: rem google-link <domain> <AR…> [AR…]");
+    writeConfig({ googleAdvertisers: { ...readConfig().googleAdvertisers, [target.domain]: ids } });
+    console.log(`Saved Google advertiser IDs for ${target.domain}: ${ids.join(", ")}. This is a user-supplied identity mapping, not a destination-domain match.`);
+    return 0;
+  }
   if (cmd === "setup") {
     const { setup } = await import("./setup.js");
     return setup({ clients: args.client ? String(args.client).split(",") : [], yes: Boolean(args.yes), dryRun: Boolean(args["dry-run"]), json: Boolean(args.json) });
@@ -82,7 +104,7 @@ async function main(argv: string[]): Promise<number> {
   const handles = Object.fromEntries(([] as string[]).concat(args.handle ?? []).map(h => h.split("=") as [string, string]).filter(([k, v]) => k && v));
 
   const t0 = Date.now();
-  const bundle = await reverseEngineer(cmd, { only, handles, maxCredits: args["max-credits"] ? Number(args["max-credits"]) : undefined, log });
+  const bundle = await reverseEngineer(cmd, { only, handles, googleAdvertiserIds: args["google-advertiser"], maxCredits: args["max-credits"] ? Number(args["max-credits"]) : undefined, log });
   log(`✓ ${bundle.evidence.length} evidence items, ${bundle.unknowns.length} unknowns in ${((Date.now() - t0) / 1000).toFixed(1)}s${bundle.credits.scrapecreators != null ? ` (${bundle.credits.scrapecreators} credits)` : ""}`);
 
   if (args.json) {
@@ -126,7 +148,8 @@ function doctor(): number {
   const row = (ok: boolean, name: string, what: string) => console.log(`${ok ? "✓" : "·"} ${name.padEnd(24)} ${what}`);
   console.log(`reverse-engineer-marketing v${VERSION} · node ${process.version}\n`);
   row(true, "free sources", "website, pixels + GTM, SEO/sitemaps, AI-crawler stance, Wayback history, App Store/Play, Hacker News");
-  row(sc, "SCRAPECREATORS_API_KEY", sc ? "Meta/Google/LinkedIn ad libraries, TikTok/IG/YouTube/X/LinkedIn stats, founders, Reddit, Product Hunt" : "not set — paid/social/founders become manual-check links (https://scrapecreators.com)");
+  row(sc, "SCRAPECREATORS_API_KEY", sc ? "Meta/LinkedIn ad libraries, TikTok/IG/YouTube/X/LinkedIn stats, founders, Reddit, Product Hunt" : "not set — Meta/LinkedIn/social/founders become manual-check links (https://scrapecreators.com)");
+  row(Boolean(process.env.REM_BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT), "Google BigQuery", "official EEA/Turkey Google ads; requires project + ADC + target advertiser IDs (credentials/access not checked)");
   row(ai, "ANTHROPIC_API_KEY", ai ? `written strategy report (${process.env.REM_MODEL ?? "claude-opus-5"})` : "not set — CLI writes the evidence report; via MCP your agent writes the strategy");
   return 0;
 }
@@ -187,7 +210,7 @@ function parseArgs(argv: string[]): Args {
       else {
         const v = inline ?? argv[++i];
         if (v === undefined) throw new Error(`--${k} needs a value`);
-        out[k] = k === "handle" ? [...(out.handle ?? []), v] : v;
+        out[k] = k === "handle" || k === "google-advertiser" ? [...(out[k] ?? []), v] : v;
       }
     } else out._.push(a);
   }
