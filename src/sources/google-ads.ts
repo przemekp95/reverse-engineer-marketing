@@ -49,7 +49,8 @@ export function googleAdsQuery(advertiserIds: string[], maximumBytesBilled: stri
         advertiser_disclosed_name, advertiser_legal_name,
         (SELECT MIN(SAFE_CAST(r.first_shown AS DATE)) FROM UNNEST(region_stats) r) AS first_shown,
         (SELECT MAX(SAFE_CAST(r.last_shown AS DATE)) FROM UNNEST(region_stats) r) AS last_shown,
-        CAST(ARRAY_LENGTH(region_stats) AS STRING) AS region_count,
+        -- Project one leaf before counting: ARRAY_LENGTH(region_stats) scans unused nested surface statistics too.
+        CAST(ARRAY_LENGTH(ARRAY(SELECT r.region_code FROM UNNEST(region_stats) r)) AS STRING) AS region_count,
         ARRAY(SELECT AS STRUCT r.region_code, r.first_shown, r.last_shown,
           CAST(r.times_shown_lower_bound AS STRING) AS times_shown_lower_bound,
           CAST(r.times_shown_upper_bound AS STRING) AS times_shown_upper_bound,

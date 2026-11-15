@@ -101,11 +101,17 @@ ID (`AR01847332847816278017`) and public table:
 | Original (main at `01055aa`): full region/audience JSON and stored URL | 134,434,256,383 | 125.20 |
 | Only report fields; still reading the stored URL | 45,762,661,609 | 42.62 |
 | Previous lean query with canonical links derived from IDs | 29,040,051,595 | 27.05 |
-| Current query: selected regional ranges, reporting periods and audience categories restored | 117,711,646,369 | 109.63 |
+| Restored context before region-count projection fix | 117,711,646,369 | 109.63 |
+| Current query: same report fields, count regions through a single projected leaf | 68,144,943,841 | 63.46 |
 
 The previous minimal query scanned **78.40% less** than the original. The current
-query restores useful market context and scans **12.44% less** than the original;
-this enrichment costs substantially more to read than dates alone. It keeps counts,
+query retains useful market context and scans **49.31% less** than the original;
+this enrichment still costs more to read than dates alone. Counting regions through
+`ARRAY_LENGTH(ARRAY(SELECT r.region_code FROM UNNEST(region_stats) r))` instead of
+`ARRAY_LENGTH(region_stats)` avoids reading unused nested surface statistics. A
+comparative live dry run reduced the estimate **42.11%** versus 109.63 GiB without
+removing any report fields; `COUNT(*) FROM UNNEST(region_stats)` did not save bytes.
+Projection preserves array length, including records with null region codes. It keeps counts,
 advertiser identities/names, formats, dates and creative-page links, plus selected
 regional and audience fields for the sampled creatives. Canonical URL construction
 was checked against an actual public row via `tabledata.list` (no query scan);
@@ -126,11 +132,11 @@ will ordinarily be blocked until you explicitly choose a suitable cap:
 ```sh
 # Example only: review the current estimate and your BigQuery billing/free-tier
 # usage before choosing a value. This is not a monthly spending cap.
-export REM_BIGQUERY_MAX_BYTES_BILLED=137438953472
+export REM_BIGQUERY_MAX_BYTES_BILLED=85899345920
 node dist/cli.js example.com --only paid --no-ai
 ```
 
-The example is 128 GiB, above the measured 109.63 GiB enriched scan. The collector never raises the cap automatically and
+The example is 80 GiB, above the measured 63.46 GiB optimized enriched scan. The collector never raises the cap automatically and
 never falls back to ScrapeCreators. A cap violation, missing identity, auth failure,
 or malformed response becomes Unknown, not zero ads. The SDK query uses a 60s
 server job timeout (best effort). BigQuery's own per-job byte cap remains the cost
