@@ -1,4 +1,5 @@
 import { BigQuery, type Query } from "@google-cloud/bigquery";
+import { z } from "zod";
 import { readConfig } from "../config.js";
 import { addContent, type Ctx } from "../context.js";
 
@@ -6,6 +7,23 @@ export const GOOGLE_ADS_TABLE = "bigquery-public-data.google_ads_transparency_ce
 export const GOOGLE_ADS_SCOPE = "EEA and Turkey";
 const DEFAULT_MAX_BYTES = "1073741824"; // 1 GiB: fail closed, never silently raise this.
 const SAMPLE_LIMIT = 20;
+const REGION_LIMIT = 40;
+const optionalText = z.string().nullish();
+const optionalCount = z.string().regex(/^\d+$/).nullish();
+const regionSchema = z.object({
+  region_code: optionalText, first_shown: optionalText, last_shown: optionalText,
+  times_shown_lower_bound: optionalCount, times_shown_upper_bound: optionalCount,
+  times_shown_start_date: optionalText, times_shown_end_date: optionalText,
+  times_shown_availability_date: optionalText,
+}).refine(r => r.times_shown_lower_bound == null || r.times_shown_upper_bound == null ||
+  BigInt(r.times_shown_lower_bound) <= BigInt(r.times_shown_upper_bound));
+const criterion = z.enum(["CRITERIA_INCLUDED", "CRITERIA_EXCLUDED", "CRITERIA_INCLUDED_AND_EXCLUDED", "CRITERIA_UNUSED"]).nullish();
+const marketContextSchema = z.object({
+  regions: z.array(regionSchema).max(REGION_LIMIT).optional(),
+  region_count: z.string().regex(/^\d+$/).optional(),
+  audience_selection: z.object({ demographic_info: criterion, geo_location: criterion,
+    contextual_signals: criterion, customer_lists: criterion, topics_of_interest: criterion }).nullish(),
+}).refine(a => a.regions === undefined || a.region_count === undefined || BigInt(a.region_count) >= BigInt(a.regions.length));
 
 /** The official table has advertiser IDs, not destination domains. Never infer ownership from a name. */
 export function advertiserIdsForDomain(domain: string | undefined, explicit: string[] | undefined, mappings: Record<string, string[]> = {}): string[] {
@@ -30,7 +48,19 @@ export function googleAdsQuery(advertiserIds: string[], maximumBytesBilled: stri
         ad_format_type,
         advertiser_disclosed_name, advertiser_legal_name,
         (SELECT MIN(SAFE_CAST(r.first_shown AS DATE)) FROM UNNEST(region_stats) r) AS first_shown,
-        (SELECT MAX(SAFE_CAST(r.last_shown AS DATE)) FROM UNNEST(region_stats) r) AS last_shown
+        (SELECT MAX(SAFE_CAST(r.last_shown AS DATE)) FROM UNNEST(region_stats) r) AS last_shown,
+        CAST(ARRAY_LENGTH(region_stats) AS STRING) AS region_count,
+        ARRAY(SELECT AS STRUCT r.region_code, r.first_shown, r.last_shown,
+          CAST(r.times_shown_lower_bound AS STRING) AS times_shown_lower_bound,
+          CAST(r.times_shown_upper_bound AS STRING) AS times_shown_upper_bound,
+          r.times_shown_start_date, r.times_shown_end_date, r.times_shown_availability_date
+          FROM UNNEST(region_stats) r ORDER BY r.region_code LIMIT ${REGION_LIMIT}) AS regions,
+        IF(audience_selection_approach_info IS NULL, NULL, STRUCT(
+          audience_selection_approach_info.demographic_info AS demographic_info,
+          audience_selection_approach_info.geo_location AS geo_location,
+          audience_selection_approach_info.contextual_signals AS contextual_signals,
+          audience_selection_approach_info.customer_lists AS customer_lists,
+          audience_selection_approach_info.topics_of_interest AS topics_of_interest)) AS audience_selection
       FROM \`${GOOGLE_ADS_TABLE}\`
       WHERE advertiser_id IN UNNEST(@advertiserIds)
     )
@@ -39,7 +69,7 @@ export function googleAdsQuery(advertiserIds: string[], maximumBytesBilled: stri
       CAST(COUNTIF(last_shown >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) AS STRING) AS shownLast30d,
       ARRAY_AGG(STRUCT(advertiser_id, creative_id, creative_page_url, ad_format_type,
         advertiser_disclosed_name, advertiser_legal_name,
-        CAST(first_shown AS STRING) AS first_shown, CAST(last_shown AS STRING) AS last_shown)
+        CAST(first_shown AS STRING) AS first_shown, CAST(last_shown AS STRING) AS last_shown, regions, region_count, audience_selection)
         ORDER BY last_shown DESC, advertiser_id, creative_id LIMIT ${SAMPLE_LIMIT}) AS sample
     FROM ads`,
   };
@@ -105,9 +135,12 @@ export async function collectGoogleAds(ctx: Ctx, manual: string): Promise<void> 
     const sample: unknown = result.sample ?? (result.total === "0" ? [] : undefined);
     if (!Array.isArray(sample) || sample.length > SAMPLE_LIMIT || sample.some(a => !ad(a, ids)) || (result.total !== "0" && sample.length === 0) || BigInt(sample.length) > BigInt(result.total)) throw new Error("Unexpected Google BigQuery ad sample");
     // Keep only report fields even if a future API response contains additional payloads.
-    const ads = (sample as Ad[]).map(({ advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown }) => ({
-      advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown,
-    }));
+    const ads = (sample as Ad[]).map(a => {
+      const context = marketContextSchema.safeParse(a);
+      if (!context.success) throw new Error("Unexpected Google BigQuery market-context response");
+      const { advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown } = a;
+      return { advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown, ...context.data };
+    });
     const e = ctx.store.add({
       source: "google_ads", kind: "observation",
       title: `Google ads (official BigQuery, ${GOOGLE_ADS_SCOPE}): ${result.total} creatives for selected advertiser IDs; ${result.shownLast30d} shown in last 30d`,
@@ -118,8 +151,9 @@ export async function collectGoogleAds(ctx: Ctx, manual: string): Promise<void> 
         creativeLinkBasis: "Canonical public ad-page links derived from advertiser_id and creative_id; URL column is not scanned",
         totalInScope: result.total, shownLast30d: result.shownLast30d, withLastShownDate: result.dated,
         sampled: ads.length, sample: ads,
+        contextScope: `Regional and audience context covers only the creative sample (at most ${SAMPLE_LIMIT}), with at most ${REGION_LIMIT} regions per creative; compare region_count with regions.length for truncation.`,
         maximumBytesBilled,
-        limitations: ["Periodically updated; may lag the public website. Last shown does not establish that an ad is active now.", "Only selected advertiser IDs and EEA/Turkey; empty results do not establish absence of Google ads globally.", "No destination domain, copy, image/video, spend, clicks, conversions or ROAS. Advertisers may advertise several domains.", "Regional impression ranges and audience-selection details are not collected. First shown is clamped to 2023-03-01 for older ads."],
+        limitations: ["Periodically updated; may lag the public website. Last shown does not establish that an ad is active now.", "Only selected advertiser IDs and EEA/Turkey; empty results do not establish absence of Google ads globally.", "No destination domain, copy, image/video, spend, clicks, conversions or ROAS. Advertisers may advertise several domains.", "Regional impression bounds describe their stated reporting periods, not unique reach or sales performance. Do not sum overlapping EEA aggregates and country rows. Null values mean unknown, not zero.", "Audience-selection categories indicate criteria usage only, not exact segments, keywords, ages, locations or effectiveness. First shown is clamped to 2023-03-01 for older ads."],
       },
     });
     addContent(ctx, ads.map(a => ({ id: `google:${a.advertiser_id}:${a.creative_id}`, platform: "google_ads" as const, kind: "ad" as const, url: a.creative_page_url, title: `${a.ad_format_type ?? "Ad"} by ${a.advertiser_disclosed_name ?? a.advertiser_legal_name ?? a.advertiser_id}`, author: a.advertiser_disclosed_name ?? a.advertiser_legal_name, date: a.first_shown, tags: [GOOGLE_ADS_SCOPE, a.ad_format_type].filter((s): s is string => Boolean(s)) })), e.id);

@@ -94,7 +94,7 @@ Subscription engines run the CLI you're already logged into. REM strips `ANTHROP
 | Area | What REM pulls | Needs a key? |
 |---|---|---|
 | **Paid: Meta** | All ads incl. paused campaigns, active count, most-shown ads, ads launched in the last 30 days, **longest-running active ads (the proven winners)** with hooks, formats, CTAs, landing pages, UTM campaign names, variant counts | Scrape Creators |
-| **Paid: Google** | Selected advertiser IDs: scoped counts, formats, first/last shown dates and public creative links; **EEA/Turkey only**, no destination-domain lookup | Official Google BigQuery ([setup](docs/google-bigquery.md)) |
+| **Paid: Google** | Selected advertiser IDs: scoped counts, formats, dates, public creative links and sampled regional impression ranges/audience categories; **EEA/Turkey only**, no destination-domain lookup | Official Google BigQuery ([setup](docs/google-bigquery.md)) |
 | **Paid: LinkedIn** | Ads by the company, ad types, headlines, CTAs | Scrape Creators |
 | **Paid: Apple Search Ads** | From Apple's public Ad Repository (EU): App Store ads over the last year, how many still serve, placements, formats, the message each ad shows, markets, audience targeting, and **copycat apps advertising under the same name** | Free |
 | **App Store link forensics** | In Meta ads that point at the App Store: custom product pages (`ppid`), campaign tokens (`ct`/`pt`), attribution parameters | Scrape Creators |
