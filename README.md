@@ -6,11 +6,20 @@
 
 **Paid ads · organic social · SEO & AI search · founders · funnel · positioning history, with the evidence for every claim.**
 
-<code>npx reverse-engineer-marketing notion.so</code>
+<code>node dist/cli.js notion.so</code>
 
 [Quick start](#quick-start) · [Web app](#web-app-use-your-claude-code-or-codex-plan) · [What it finds](#what-it-finds) · [Use it from your agent (MCP)](#use-it-from-your-agent-mcp) · [Example report](examples/calai.app.md) · [How it works](#how-it-works)
 
 </div>
+
+> **This fork uses official Google BigQuery data for Google Ads, without ScrapeCreators.**
+> Install/build this checkout; the published upstream `npx` package does not contain
+> this change. Google collection requires ADC, a project and verified advertiser IDs
+> (or a saved domain mapping). Coverage is EEA/Turkey, not destination-domain search.
+> **Estimate the scan first:** the default 1 GiB byte cap deliberately blocks larger
+> queries. [Setup, commands, cost controls and limitations](docs/google-bigquery.md).
+> The original examples below using the published npm package describe upstream;
+> use `node dist/cli.js` instead after building this fork.
 
 ---
 
@@ -85,7 +94,7 @@ Subscription engines run the CLI you're already logged into. REM strips `ANTHROP
 | Area | What REM pulls | Needs a key? |
 |---|---|---|
 | **Paid: Meta** | All ads incl. paused campaigns, active count, most-shown ads, ads launched in the last 30 days, **longest-running active ads (the proven winners)** with hooks, formats, CTAs, landing pages, UTM campaign names, variant counts | Scrape Creators |
-| **Paid: Google** | Ads pointing at the domain, formats, recency, and **other advertisers bidding on the brand** (affiliates/resellers) | Scrape Creators |
+| **Paid: Google** | Selected advertiser IDs: scoped counts, formats, recency, regional/audience metadata and public creative links; **EEA/Turkey only**, no destination-domain lookup | Official Google BigQuery ([setup](docs/google-bigquery.md)) |
 | **Paid: LinkedIn** | Ads by the company, ad types, headlines, CTAs | Scrape Creators |
 | **Paid: Apple Search Ads** | From Apple's public Ad Repository (EU): App Store ads over the last year, how many still serve, placements, formats, the message each ad shows, markets, audience targeting, and **copycat apps advertising under the same name** | Free |
 | **App Store link forensics** | In Meta ads that point at the App Store: custom product pages (`ppid`), campaign tokens (`ct`/`pt`), attribution parameters | Scrape Creators |

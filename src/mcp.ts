@@ -31,11 +31,12 @@ export function createServer(): McpServer {
         url: z.string().describe("Website domain/URL, App Store URL or Google Play URL"),
         only: z.array(z.enum(AREAS as [string, ...string[]])).optional().describe(`Limit to areas: ${AREAS.join(", ")}. Website always runs.`),
         handles: z.record(z.string(), z.string()).optional().describe('Override discovered handles, e.g. {"tiktok":"notionhq","x":"NotionHQ"}'),
+        google_advertiser_ids: z.array(z.string().regex(/^AR\d{20}$/)).max(20).optional().describe("Verified Google advertiser IDs for this target. Official BigQuery (EEA/Turkey), no destination-domain lookup; omit to use a saved domain mapping."),
         max_credits: z.number().int().min(0).max(500).optional().describe("Scrape Creators credit budget (default 50)"),
       },
     },
-    async ({ url, only, handles, max_credits }) => {
-      const bundle = await reverseEngineer(url, { only: only as any, handles: handles as any, maxCredits: max_credits });
+    async ({ url, only, handles, max_credits, google_advertiser_ids }) => {
+      const bundle = await reverseEngineer(url, { only: only as any, handles: handles as any, maxCredits: max_credits, googleAdvertiserIds: google_advertiser_ids });
       const { id, path } = await saveRun(bundle);
       return text(
         [
@@ -79,7 +80,7 @@ export function createServer(): McpServer {
     "get_content",
     {
       title: "Get posts, videos and ads",
-      description: "Concrete items to quote or show the user: Meta/Google/LinkedIn ads (with media URLs, running days, active/paused), TikTok and Instagram videos/posts, YouTube videos, X and LinkedIn posts (company + founders), Reddit threads and brand/founder replies. Each item links to the original.",
+      description: "Concrete items to quote or show the user: Meta/LinkedIn ads (media and status where available), official Google EEA/Turkey creative-page links (no media/current-activation data), TikTok and Instagram videos/posts, YouTube videos, X and LinkedIn posts (company + founders), Reddit threads and brand/founder replies. Each item links to the original.",
       inputSchema: {
         run_id: z.string(),
         platform: z.enum(["meta_ads", "google_ads", "linkedin_ads", "apple_ads", "tiktok", "instagram", "youtube", "x", "linkedin", "reddit"]).optional(),

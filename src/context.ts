@@ -31,6 +31,9 @@ export interface Ctx {
   target: Target;
   store: EvidenceStore;
   sc: ScrapeCreators | null;
+  /** Explicit, target-specific Google advertiser IDs; never shared implicitly across domains. */
+  googleAdvertiserIds?: string[];
+  googleAdsDryRun?: boolean;
   found: Discovered;
   content: ContentItem[];
   log: (msg: string) => void;

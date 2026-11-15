@@ -1,5 +1,6 @@
 import { addContent, type Ctx } from "../context.js";
 import { clip, daysAgo } from "../http.js";
+import { collectGoogleAds } from "./google-ads.js";
 
 export function adLibraryLinks(brand: string, domain?: string) {
   const q = encodeURIComponent(brand);
@@ -22,13 +23,14 @@ export async function collectPaid(ctx: Ctx): Promise<void> {
   store.unknown({ channel: "paid_tiktok", reason: "TikTok has no global ad library API; check the EU library / Creative Center by hand (TikTok pixel presence is reported under tracking)", manualCheck: links.tiktok });
   store.unknown({ channel: "paid_reddit", reason: "Reddit's ad library was shut down; Reddit pixel presence (tracking) is the only signal", manualCheck: links.reddit });
 
+  const google = collectGoogleAds(ctx, links.google);
   if (!ctx.sc) {
     store.unknown({ channel: "paid_meta", reason: "SCRAPECREATORS_API_KEY not set", manualCheck: links.meta });
-    store.unknown({ channel: "paid_google", reason: "SCRAPECREATORS_API_KEY not set", manualCheck: links.google });
+    await google;
     store.unknown({ channel: "paid_linkedin", reason: "SCRAPECREATORS_API_KEY not set", manualCheck: links.linkedin });
     return;
   }
-  await Promise.allSettled([metaAds(ctx, brand, links.meta), googleAds(ctx, links.google), linkedinAds(ctx, brand, links.linkedin)]);
+  await Promise.allSettled([metaAds(ctx, brand, links.meta), google, linkedinAds(ctx, brand, links.linkedin)]);
 }
 
 /** First image / video in a Meta ad snapshot (incl. carousel cards). */
@@ -152,43 +154,6 @@ async function metaAds(ctx: Ctx, brand: string, manual: string): Promise<void> {
     );
   } catch (err) {
     store.unknown({ channel: "paid_meta", reason: errMsg(err), manualCheck: manual });
-  }
-}
-
-async function googleAds(ctx: Ctx, manual: string): Promise<void> {
-  const { store, target } = ctx;
-  if (!target.domain) return;
-  try {
-    // Ads may still point at an old domain that now redirects (notion.so → notion.com).
-    let domain = target.domain;
-    let res = await ctx.sc!.get<any>("/v1/google/company/ads", { domain });
-    for (const alias of target.aliases ?? []) {
-      if ((res?.ads ?? []).length || !ctx.sc!.can(4)) break;
-      domain = alias;
-      res = await ctx.sc!.get<any>("/v1/google/company/ads", { domain });
-    }
-    const ads = (res?.ads ?? []) as any[];
-    const advertisers = tally(ads.map(a => a.advertiserName));
-    const lastShown = ads.map(a => Date.parse(a.lastShown)).filter(Number.isFinite);
-    const recent = lastShown.filter(t => Date.now() - t < 30 * 86_400_000).length;
-    const ge = store.add({
-      source: "google_ads",
-      kind: "observation",
-      title: `Google ads: ~${res?.number_of_ads_estimate ?? ads.length} ads pointing at ${domain} (${recent} shown in last 30d), formats ${Object.keys(tally(ads.map(a => a.format))).join("/") || "n/a"}`,
-      url: `https://adstransparency.google.com/?region=anywhere&domain=${domain}`,
-      data: {
-        domain,
-        estimate: res?.number_of_ads_estimate ?? ads.length,
-        formats: tally(ads.map(a => a.format)),
-        advertisers,
-        note: Object.keys(advertisers).length > 1 ? "Multiple advertiser names bid on this domain — check for resellers, affiliates or agencies." : undefined,
-        shownLast30d: recent,
-        sample: ads.slice(0, 8).map(a => ({ advertiser: a.advertiserName, format: a.format, firstShown: a.firstShown?.slice(0, 10), lastShown: a.lastShown?.slice(0, 10), url: a.adUrl, image: a.imageUrl })),
-      },
-    });
-    addContent(ctx, ads.map(a => ({ id: `google:${a.creativeId}`, platform: "google_ads" as const, kind: "ad" as const, url: a.adUrl, title: `${a.format ?? "ad"} by ${a.advertiserName ?? "?"}`, thumb: a.imageUrl, author: a.advertiserName, date: a.firstShown?.slice(0, 10), status: Date.now() - Date.parse(a.lastShown) < 30 * 86_400_000 ? ("active" as const) : ("inactive" as const), tags: [a.format].filter(Boolean) })), ge.id);
-  } catch (err) {
-    store.unknown({ channel: "paid_google", reason: errMsg(err), manualCheck: manual });
   }
 }
 

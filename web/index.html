@@ -335,13 +335,20 @@ dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
     <input id="url" name="url" placeholder="linear.app, or an App Store / Google Play link" inputmode="url" autofocus>
     <button class="btn" id="go" type="submit">Reverse engineer</button>
   </form>
+  <details style="margin: 12px 0">
+    <summary>Google Ads: select advertiser identities</summary>
+    <label for="googleAdvertisers">Verified advertiser IDs for this company (optional; comma separated)</label>
+    <input class="field mono" id="googleAdvertisers" form="form" placeholder="AR…" aria-describedby="googleAdsHelp">
+    <p id="googleAdsHelp">Uses official Google BigQuery for EEA/Turkey. Leave blank to use a saved domain mapping. These are advertisers, not a search for every ad pointing to this website. Project and Google credentials must be configured on this machine.</p>
+    <a href="https://adstransparency.google.com/" target="_blank" rel="noopener noreferrer">Find and verify the advertiser in Google's public library</a>
+  </details>
   <div class="examples">Try <button data-ex="calai.app">calai.app</button><button data-ex="linear.app">linear.app</button><button data-ex="notion.so">notion.so</button><button data-ex="duolingo.com">duolingo.com</button></div>
 
   <p class="label">Who writes the report</p>
   <div class="engines" id="engines" role="radiogroup"></div>
 
   <div class="banner" id="keyBanner" hidden>
-    <span>Without a Scrape Creators key you still get website, pixels, SEO, history and app data. Add one to unlock ad libraries, social stats and founders.</span>
+    <span>Without a Scrape Creators key you still get website, pixels, SEO, history and app data. Add one to unlock Meta/LinkedIn ads, social stats and founders. Google ads use official BigQuery separately.</span>
     <button class="btn small ghost" data-open-key>Add key</button>
   </div>
 
@@ -413,7 +420,7 @@ dialog p { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
 <dialog id="keyDialog">
   <form method="dialog" id="keyForm">
     <h3>Scrape Creators key</h3>
-    <p>Unlocks Meta, Google and LinkedIn ad libraries, TikTok/Instagram/YouTube/X/LinkedIn stats, founders and Reddit. About 25–50 credits per run. Saved to <span class="mono">~/.config/reverse-engineer-marketing</span> on this machine only.</p>
+    <p>Unlocks Meta and LinkedIn ad libraries, TikTok/Instagram/YouTube/X/LinkedIn stats, founders and Reddit. About 25–50 credits per run. Saved to <span class="mono">~/.config/reverse-engineer-marketing</span> on this machine only.</p>
     <input class="field mono" id="keyInput" type="password" placeholder="sk_…" autocomplete="off">
     <div class="row">
       <a class="btn small ghost" href="https://scrapecreators.com" target="_blank" rel="noreferrer">Get a key</a>
@@ -518,7 +525,7 @@ $("#form").addEventListener("submit", async e => {
   if (!url) return $("#url").focus();
   $("#go").disabled = true;
   try {
-    const { jobId } = await api("/api/runs", { method: "POST", body: JSON.stringify({ url, engine }) });
+    const { jobId } = await api("/api/runs", { method: "POST", body: JSON.stringify({ url, engine, googleAdvertiserIds: $("#googleAdvertisers").value.trim() ? $("#googleAdvertisers").value.split(/[\s,]+/).filter(Boolean) : undefined }) });
     location.hash = `#/job/${jobId}`;
   } catch (err) { toast(err.message); }
   finally { $("#go").disabled = false; }
