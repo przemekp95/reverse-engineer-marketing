@@ -136,3 +136,6 @@ export { synthesize } from "./analyze/synthesize.js";
 export { validateReport } from "./report/validate.js";
 export type { ChannelScore } from "./analyze/scorecard.js";
 export type { Evidence, Unknown } from "./evidence.js";
+
+export { prefetchGoogleAds } from "./sources/google-ads-fetch.js";
+export type { GoogleAdsPrefetchResult } from "./sources/google-ads-fetch.js";

@@ -47,7 +47,7 @@ export function scorecard(store: EvidenceStore): ChannelScore[] {
       const dated = BigInt(g.withLastShownDate);
       const status = recent > 0n ? "likely" : total > 0n && dated === total ? "dormant" : "unknown";
       set("paid_google", status, status === "unknown" ? 0 : total >= 50n ? 3 : total >= 10n ? 2 : total > 0n ? 1 : 0,
-        `${total} creatives for selected advertisers in EEA and Turkey, ${recent} shown in last 30d, ${total - dated} without usable last-shown dates; current activation and global/domain coverage unknown`, [google]);
+        `${total} creatives for selected advertisers in EEA and Turkey, ${recent} shown in last 30d${g.snapshot?.asOfDate ? ` as of ${g.snapshot.asOfDate}` : ""}, ${total - dated} without usable last-shown dates; current activation and global/domain coverage unknown`, [google]);
     } else {
       set("paid_google", g.shownLast30d > 0 ? "active" : g.estimate > 0 ? "dormant" : "none", g.estimate >= 50 ? 3 : g.estimate >= 10 ? 2 : g.estimate > 0 ? 1 : 0, `~${g.estimate} ads, ${g.shownLast30d} shown in last 30d`, [google]);
     }

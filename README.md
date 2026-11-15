@@ -17,7 +17,10 @@
 > this change. Google collection requires ADC, a project and verified advertiser IDs
 > (or a saved domain mapping). Coverage is EEA/Turkey, not destination-domain search.
 > **Estimate the scan first:** the default 1 GiB byte cap deliberately blocks larger
-> queries. [Setup, commands, cost controls and limitations](docs/google-bigquery.md).
+> queries. Fetch competitors together with `node dist/cli.js google-fetch domain1 domain2`
+> after saving their advertiser mappings; reports reuse complete local Google snapshots
+> for 24 hours, with the original data date shown. Add `--dry-run` to estimate first or
+> `--refresh` to fetch again. [Setup, commands, cost controls and limitations](docs/google-bigquery.md).
 > The original examples below using the published npm package describe upstream;
 > use `node dist/cli.js` instead after building this fork.
 
