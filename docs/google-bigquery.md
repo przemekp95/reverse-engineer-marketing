@@ -12,8 +12,6 @@ The published upstream npm package does not contain these changes. Use this chec
 ```sh
 git clone https://github.com/przemekp95/reverse-engineer-marketing.git
 cd reverse-engineer-marketing
-# Until the feature PR is merged:
-git switch feat/google-ads-bigquery
 npm ci
 npm run build
 node dist/cli.js --help
@@ -102,18 +100,23 @@ ID (`AR01847332847816278017`) and public table:
 | --- | ---: | ---: |
 | Original (main at `01055aa`): full region/audience JSON and stored URL | 134,434,256,383 | 125.20 |
 | Only report fields; still reading the stored URL | 45,762,661,609 | 42.62 |
-| Lean query with canonical links derived from IDs | 29,040,051,595 | 27.05 |
+| Previous lean query with canonical links derived from IDs | 29,040,051,595 | 27.05 |
+| Current query: selected regional ranges, reporting periods and audience categories restored | 117,711,646,369 | 109.63 |
 
-The final query scans **78.40% less** than the original. It keeps counts, advertiser
-identities/names, formats, first/last shown dates and creative-page links. Canonical
-URL construction was checked against an actual public row via `tabledata.list`
-(no query scan); evidence labels those links as derived. The SQL passed Google's
+The previous minimal query scanned **78.40% less** than the original. The current
+query restores useful market context and scans **12.44% less** than the original;
+this enrichment costs substantially more to read than dates alone. It keeps counts,
+advertiser identities/names, formats, dates and creative-page links, plus selected
+regional and audience fields for the sampled creatives. Canonical URL construction
+was checked against an actual public row via `tabledata.list` (no query scan);
+evidence labels those links as derived. The current SQL passed a fresh Google
 dry-run validation. No SELECT was executed to collect ad results.
 
 These are observations, not fixed sizes or price promises; repeat the estimate
-with current data. Full regional stats and audience-selection JSON are deliberately
-excluded. Only `region_stats.first_shown` and `region_stats.last_shown` are read
-from the nested regional record.
+with current data. Explicit regional leaf columns are selected, without full raw
+JSON or the nested per-surface serving breakdown. Audience metadata includes only
+the five documented criterion-usage categories. Limiting the returned sample does
+not limit the bytes read for those columns.
 
 The table was unpartitioned and unclustered when checked. Filtering to one
 advertiser or limiting output to 20 creatives does **not** make the scan small.
@@ -123,11 +126,11 @@ will ordinarily be blocked until you explicitly choose a suitable cap:
 ```sh
 # Example only: review the current estimate and your BigQuery billing/free-tier
 # usage before choosing a value. This is not a monthly spending cap.
-export REM_BIGQUERY_MAX_BYTES_BILLED=34359738368
+export REM_BIGQUERY_MAX_BYTES_BILLED=137438953472
 node dist/cli.js example.com --only paid --no-ai
 ```
 
-The example is 32 GiB, above the measured 27.05 GiB lean scan. The collector never raises the cap automatically and
+The example is 128 GiB, above the measured 109.63 GiB enriched scan. The collector never raises the cap automatically and
 never falls back to ScrapeCreators. A cap violation, missing identity, auth failure,
 or malformed response becomes Unknown, not zero ads. The SDK query uses a 60s
 server job timeout (best effort). BigQuery's own per-job byte cap remains the cost
@@ -149,9 +152,19 @@ queries, but is not guaranteed. No extra application-level data cache is introdu
 - The latest regional last-shown date determines recency; null/invalid dates stay
   unknown. Recently seen is `likely`, not `active now`; zero rows never means global
   absence. If some dates are missing and none is recent, status remains Unknown.
-- Full regional statistics, impression ranges and audience-selection metadata are
-  not collected. Regional dates are reduced to the earliest first-shown and latest
-  last-shown date for each creative; the report cannot infer targeting or reach.
+- Market context covers **only the sample of at most 20 creatives**, not the full
+  advertiser footprint. Each contains at most 40 region records, ordered by region
+  code; compare `region_count` with `regions.length` to detect truncation.
+- Regional records retain region code, first/last dates, impression lower/upper
+  bounds, reporting start/end dates and availability date. Bounds are decimal strings
+  to preserve INT64; null means unknown, never zero. Dates must be considered when
+  comparing ranges. Do not sum overlapping EEA aggregates and individual countries.
+  Impressions are not unique reach, clicks, spend or conversion performance.
+- Audience metadata preserves demographic, geographic, contextual, customer-list
+  and interest category usage (`CRITERIA_INCLUDED`, `CRITERIA_EXCLUDED`,
+  `CRITERIA_INCLUDED_AND_EXCLUDED`, `CRITERIA_UNUSED`). Missing values stay unknown.
+  These do not reveal exact segments, keywords, ages, locations or effectiveness,
+  and are not enough to reproduce a competitor's campaign settings.
 - Data is periodically refreshed and may lag the website. First-shown dates before
   2023-03-01 are clamped by the source.
 - No ad copy, destination URLs, image/video URLs, spend, CPC, conversions or ROAS
@@ -166,7 +179,8 @@ only in trusted project configuration; direct invocation is not proof of automat
 hook activation. Branch protection is not changed by this feature.
 
 Tests cover collection without ScrapeCreators, official query parameters and cap,
-Unknown/error behavior, missing dates, dry-run non-execution, target-specific ID
+Unknown/error behavior, missing dates, null audience values, large integer impression
+ranges, malformed/reversed bounds, dry-run non-execution, target-specific ID
 forwarding through the public API/MCP/local HTTP (including the origin guard), redirect mappings, and CLI mapping persistence.
 Offline responses exercise behavior; a live metadata read and dry run verify schema,
 US location and SQL acceptance. They do not prove that a charged query completed or

@@ -112,4 +112,34 @@ describe("official Google ads collection", () => {
     expect(ctx.content[0]).toMatchObject({ url: facts.creative_page_url, author: "Example", date: "2024-01-01", tags: ["EEA and Turkey", "TEXT"] });
   });
 
+  it("preserves useful regional ranges, reporting periods and categorical audience context without inventing totals", async () => {
+    const ctx = context(); Object.assign(ctx, { googleAdvertiserIds: [advertiserId] });
+    const regions = [
+      { region_code: "EEA", first_shown: "2024-01-01", last_shown: "2024-02-01", times_shown_lower_bound: "9007199254740993", times_shown_upper_bound: "9007199254740999", times_shown_start_date: "2024-01-01", times_shown_end_date: "2024-02-01", times_shown_availability_date: null },
+      { region_code: "PL", times_shown_lower_bound: null, times_shown_upper_bound: null, times_shown_start_date: null, times_shown_end_date: null, times_shown_availability_date: "2024-03-01" },
+    ];
+    const audience = { demographic_info: "CRITERIA_UNUSED", geo_location: "CRITERIA_INCLUDED", contextual_signals: null, customer_lists: "CRITERIA_EXCLUDED", topics_of_interest: "CRITERIA_INCLUDED_AND_EXCLUDED" };
+    mocks.query.mockResolvedValue([[{ total: "100", shownLast30d: "0", dated: "100", sample: [{ advertiser_id: advertiserId, creative_id: "CR1", creative_page_url: `https://adstransparency.google.com/advertiser/${advertiserId}/creative/CR1`, regions, region_count: "2", audience_selection: audience }] }]]);
+    await collectPaid(ctx);
+    const data = ctx.store.bySource("google_ads")[0]!.data as any;
+    expect(data.sample[0]).toMatchObject({ regions, region_count: "2", audience_selection: audience });
+    expect(data.contextScope).toContain("sample");
+    expect(data.limitations.join(" ")).toContain("Do not sum");
+    expect(data.sample[0].totalImpressions).toBeUndefined();
+    expect(data.sample[0].regions[1].times_shown_lower_bound).toBeNull();
+  });
+  it("retains null audience data and rejects invalid or reversed impression ranges", async () => {
+    for (const region of [null, { region_code: "PL", times_shown_lower_bound: "not-a-count" }, { region_code: "PL", times_shown_lower_bound: "100", times_shown_upper_bound: "10" }]) {
+      const ctx = context(); Object.assign(ctx, { googleAdvertiserIds: [advertiserId] });
+      mocks.query.mockResolvedValue([[{ total: "1", shownLast30d: "0", dated: "1", sample: [{ advertiser_id: advertiserId, creative_id: "CR1", creative_page_url: `https://adstransparency.google.com/advertiser/${advertiserId}/creative/CR1`, regions: region ? [region] : [], region_count: region ? "1" : "0", audience_selection: null }] }]]);
+      await collectPaid(ctx);
+      if (region) {
+        expect(ctx.store.bySource("google_ads")).toHaveLength(0);
+        expect(ctx.store.unknowns.some(u => u.channel === "paid_google")).toBe(true);
+      } else {
+        expect(ctx.store.bySource("google_ads")[0]).toMatchObject({ data: { sample: [{ audience_selection: null, regions: [] }] } });
+      }
+    }
+  });
+
 });
