@@ -25,12 +25,12 @@ export function googleAdsQuery(advertiserIds: string[], maximumBytesBilled: stri
     location: "US", useLegacySql: false, maximumBytesBilled, jobTimeoutMs: 60_000,
     params: { advertiserIds },
     query: `WITH ads AS (
-      SELECT advertiser_id, creative_id, creative_page_url, ad_format_type,
+      SELECT advertiser_id, creative_id,
+        CONCAT('https://adstransparency.google.com/advertiser/', advertiser_id, '/creative/', creative_id) AS creative_page_url,
+        ad_format_type,
         advertiser_disclosed_name, advertiser_legal_name,
         (SELECT MIN(SAFE_CAST(r.first_shown AS DATE)) FROM UNNEST(region_stats) r) AS first_shown,
-        (SELECT MAX(SAFE_CAST(r.last_shown AS DATE)) FROM UNNEST(region_stats) r) AS last_shown,
-        TO_JSON_STRING(region_stats) AS regions_json,
-        TO_JSON_STRING(audience_selection_approach_info) AS audience_json
+        (SELECT MAX(SAFE_CAST(r.last_shown AS DATE)) FROM UNNEST(region_stats) r) AS last_shown
       FROM \`${GOOGLE_ADS_TABLE}\`
       WHERE advertiser_id IN UNNEST(@advertiserIds)
     )
@@ -39,8 +39,7 @@ export function googleAdsQuery(advertiserIds: string[], maximumBytesBilled: stri
       CAST(COUNTIF(last_shown >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) AS STRING) AS shownLast30d,
       ARRAY_AGG(STRUCT(advertiser_id, creative_id, creative_page_url, ad_format_type,
         advertiser_disclosed_name, advertiser_legal_name,
-        CAST(first_shown AS STRING) AS first_shown, CAST(last_shown AS STRING) AS last_shown,
-        regions_json, audience_json)
+        CAST(first_shown AS STRING) AS first_shown, CAST(last_shown AS STRING) AS last_shown)
         ORDER BY last_shown DESC, advertiser_id, creative_id LIMIT ${SAMPLE_LIMIT}) AS sample
     FROM ads`,
   };
@@ -69,8 +68,6 @@ interface Ad {
   advertiser_legal_name?: string;
   first_shown?: string;
   last_shown?: string;
-  regions_json?: string;
-  audience_json?: string;
 }
 function count(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
@@ -107,7 +104,10 @@ export async function collectGoogleAds(ctx: Ctx, manual: string): Promise<void> 
     if (rows.length !== 1 || !result || !count(result.total) || !count(result.shownLast30d) || !count(result.dated) || BigInt(result.dated) > BigInt(result.total) || BigInt(result.shownLast30d) > BigInt(result.dated)) throw new Error("Unexpected Google BigQuery aggregate response");
     const sample: unknown = result.sample ?? (result.total === "0" ? [] : undefined);
     if (!Array.isArray(sample) || sample.length > SAMPLE_LIMIT || sample.some(a => !ad(a, ids)) || (result.total !== "0" && sample.length === 0) || BigInt(sample.length) > BigInt(result.total)) throw new Error("Unexpected Google BigQuery ad sample");
-    const ads = sample as Ad[];
+    // Keep only report fields even if a future API response contains additional payloads.
+    const ads = (sample as Ad[]).map(({ advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown }) => ({
+      advertiser_id, creative_id, creative_page_url, ad_format_type, advertiser_disclosed_name, advertiser_legal_name, first_shown, last_shown,
+    }));
     const e = ctx.store.add({
       source: "google_ads", kind: "observation",
       title: `Google ads (official BigQuery, ${GOOGLE_ADS_SCOPE}): ${result.total} creatives for selected advertiser IDs; ${result.shownLast30d} shown in last 30d`,
@@ -115,10 +115,11 @@ export async function collectGoogleAds(ctx: Ctx, manual: string): Promise<void> 
       data: {
         provider: "google_bigquery", table: GOOGLE_ADS_TABLE, scope: GOOGLE_ADS_SCOPE,
         advertiserIds: ids, identityBasis: "Explicit target-specific advertiser IDs or saved domain mapping; not a verified destination-domain match",
+        creativeLinkBasis: "Canonical public ad-page links derived from advertiser_id and creative_id; URL column is not scanned",
         totalInScope: result.total, shownLast30d: result.shownLast30d, withLastShownDate: result.dated,
         sampled: ads.length, sample: ads,
         maximumBytesBilled,
-        limitations: ["Periodically updated; may lag the public website. Last shown does not establish that an ad is active now.", "Only selected advertiser IDs and EEA/Turkey; empty results do not establish absence of Google ads globally.", "No destination domain, copy, image/video, spend, clicks, conversions or ROAS. Advertisers may advertise several domains.", "Regional impression ranges may overlap (EEA aggregate plus countries); do not sum them. First shown is clamped to 2023-03-01 for older ads."],
+        limitations: ["Periodically updated; may lag the public website. Last shown does not establish that an ad is active now.", "Only selected advertiser IDs and EEA/Turkey; empty results do not establish absence of Google ads globally.", "No destination domain, copy, image/video, spend, clicks, conversions or ROAS. Advertisers may advertise several domains.", "Regional impression ranges and audience-selection details are not collected. First shown is clamped to 2023-03-01 for older ads."],
       },
     });
     addContent(ctx, ads.map(a => ({ id: `google:${a.advertiser_id}:${a.creative_id}`, platform: "google_ads" as const, kind: "ad" as const, url: a.creative_page_url, title: `${a.ad_format_type ?? "Ad"} by ${a.advertiser_disclosed_name ?? a.advertiser_legal_name ?? a.advertiser_id}`, author: a.advertiser_disclosed_name ?? a.advertiser_legal_name, date: a.first_shown, tags: [GOOGLE_ADS_SCOPE, a.ad_format_type].filter((s): s is string => Boolean(s)) })), e.id);
