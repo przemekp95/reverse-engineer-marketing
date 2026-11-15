@@ -85,6 +85,66 @@ To use this fork through MCP, run `node /absolute/path/to/checkout/dist/cli.js m
 with project/ADC configuration available to that process. Do not use upstream `npx`
 commands if you expect this fork's behavior.
 
+## Fetch competitors together and reuse local results
+
+Save each competitor's verified advertiser mapping with `google-link`, then fetch
+up to 20 domains together. Each domain may have up to 20 advertiser IDs. These are
+still explicit domain-to-identity mappings, not inferred destination domains.
+
+```sh
+# These are syntax examples, not verified ownership associations.
+node dist/cli.js google-link example.com AR01847332847816278017
+node dist/cli.js google-link competitor.example AR00000000000000000001
+node dist/cli.js google-fetch example.com competitor.example --dry-run
+# After reviewing the estimate and explicitly choosing a sufficient execution cap:
+node dist/cli.js google-fetch example.com competitor.example
+```
+
+`google-fetch` makes one BigQuery query for the missing/expired competitors, then
+saves a separate snapshot for each exact advertiser-ID set. **Each competitor gets
+its own complete scoped counts and up to 20 most recently shown creatives**, not a
+shared pool of 20. All existing report fields survive: identities, names, formats,
+links, dates, regional impression ranges and periods, and audience categories.
+Overlapping IDs across competitors remain explicitly associated with each requested
+identity set; a multi-ID competitor is aggregated before selecting its own sample.
+A completed query with no rows for a requested identity set is recorded as zero in
+that scope. A failed or malformed query is never recorded as zero.
+
+The JSON command summary reports cache hits and fetched **unique identity groups**,
+requested domain count, advertiser IDs,
+`fetchedAt`, and the UTC `asOfDate` used for the 30-day counts. An ordinary report
+then reuses the matching snapshot automatically through CLI, MCP, or the web app:
+
+```sh
+node dist/cli.js example.com --only paid --no-ai
+node dist/cli.js competitor.example --only paid --no-ai
+# Bypass saved results and fetch a new snapshot for these competitors:
+node dist/cli.js google-fetch example.com competitor.example --refresh
+```
+
+A local hit requires the exact same sorted ID set and a valid snapshot less than
+24 hours old. Changing a saved mapping cannot silently reuse another identity set.
+Evidence identifies the original fetch time and reference date; reuse does not
+claim a new live check. All fields are retained, but the snapshot represents the
+source as fetched, and the 30-day counters remain relative to its `asOfDate`.
+An expired, future-dated, incompatible or corrupt snapshot is a miss, not a reason
+to accept stale data; a subsequent lookup failure remains Unknown. There is no
+stale fallback when refresh fails.
+
+Snapshots are JSON files under
+`$REM_CACHE_DIR/google-ads/`, or
+`~/.cache/reverse-engineer-marketing/google-ads/` by default. Filenames hash the
+schema version, source table and canonical ID set. Writes use an atomic replacement,
+with private directory/file permissions (0700/0600). They store report data and
+provenance, never ADC credentials or API keys. A valid local hit needs no BigQuery
+project or credentials; a miss/refresh still requires the normal Google setup.
+
+`--dry-run` estimates only missing/expired groups, or all requested groups with
+`--refresh`; it neither executes the SELECT nor writes snapshots. Cache-only runs
+need no query. The default 1 GiB cap is unchanged and applies to the **whole batch**.
+The batch is a cost-saving collection step, not a parallel series of per-competitor
+scans. No recurring job, Google dataset, or cloud storage resource is created.
+
 ## Estimate first; cap every execution
 
 ```sh
@@ -103,6 +163,7 @@ ID (`AR01847332847816278017`) and public table:
 | Previous lean query with canonical links derived from IDs | 29,040,051,595 | 27.05 |
 | Restored context before region-count projection fix | 117,711,646,369 | 109.63 |
 | Current query: same report fields, count regions through a single projected leaf | 68,144,943,841 | 63.46 |
+| Batched target groups (including overlapping IDs and a multi-ID target), same report fields | 68,144,943,841 | 63.46 |
 
 The previous minimal query scanned **78.40% less** than the original. The current
 query retains useful market context and scans **49.31% less** than the original;
@@ -117,6 +178,11 @@ regional and audience fields for the sampled creatives. Canonical URL constructi
 was checked against an actual public row via `tabledata.list` (no query scan);
 evidence labels those links as derived. The current SQL passed a fresh Google
 dry-run validation. No SELECT was executed to collect ad results.
+
+The final batch query was independently accepted by a live dry run with separate
+target identity groups (including overlapping advertiser IDs). It retains counts
+and a separate top-20 sample per group at the same estimated scan size. This
+validates SQL and estimated bytes, not live paid-query results.
 
 These are observations, not fixed sizes or price promises; repeat the estimate
 with current data. Explicit regional leaf columns are selected, without full raw
@@ -145,8 +211,10 @@ boundary; a timeout/cancellation is not a guarantee that no bytes were billed.
 BigQuery offers a free tier, including a sandbox without a card. Queries beyond
 available allowances can incur charges in projects with billing enabled. This
 fork makes no claim about remaining free allowance in your account. Repeated scans
-can exhaust it quickly; the SDK's standard query cache may help identical repeated
-queries, but is not guaranteed. No extra application-level data cache is introduced.
+can exhaust it quickly. The application-level 24-hour snapshots above avoid repeated
+scans for the same identity set. The SDK's standard query cache is separate and is
+not guaranteed; do not assume a refresh is free. Set `REM_NO_CACHE=1` to bypass
+application-level reads and writes for Google snapshots (and other REM caches).
 
 ## Evidence semantics and limitations
 
@@ -185,7 +253,8 @@ only in trusted project configuration; direct invocation is not proof of automat
 hook activation. Branch protection is not changed by this feature.
 
 Tests cover collection without ScrapeCreators, official query parameters and cap,
-Unknown/error behavior, missing dates, null audience values, large integer impression
+Unknown/error behavior, cache-only CLI use without credentials, explicit refresh,
+unchanged mappings, missing dates, null audience values, large integer impression
 ranges, malformed/reversed bounds, dry-run non-execution, target-specific ID
 forwarding through the public API/MCP/local HTTP (including the origin guard), redirect mappings, and CLI mapping persistence.
 Offline responses exercise behavior; a live metadata read and dry run verify schema,
@@ -209,3 +278,12 @@ Official sources:
 - [ADC local setup](https://docs.cloud.google.com/docs/authentication/set-up-adc-local-dev-environment)
 - [BigQuery cost controls](https://docs.cloud.google.com/bigquery/docs/best-practices-costs)
 - [Sandbox/free tier](https://docs.cloud.google.com/bigquery/docs/sandbox)
+
+Programmatic prefetch uses the same behavior:
+
+```ts
+import { prefetchGoogleAds } from "reverse-engineer-marketing";
+await prefetchGoogleAds(["example.com", "competitor.example"], { dryRun: true });
+// Once the estimate and configured cap are suitable:
+await prefetchGoogleAds(["example.com", "competitor.example"]);
+```

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EvidenceStore } from "../src/evidence.js";
 import { scorecard } from "../src/analyze/scorecard.js";
 import { collectPaid } from "../src/sources/paid.js";
@@ -14,8 +17,13 @@ const advertiserId = "AR01847332847816278017";
 function context(): Ctx {
   return { target: { kind: "website", input: "example.com", url: "https://example.com", domain: "example.com" }, store: new EvidenceStore(), sc: null, content: [], found: { socials: {}, people: [], appStoreIds: [], playIds: [], logos: [], founderHints: [] }, log: () => {} };
 }
+let cacheDir: string;
+afterEach(() => rmSync(cacheDir, { recursive: true, force: true }));
 beforeEach(() => {
   vi.unstubAllEnvs();
+  cacheDir = mkdtempSync(join(tmpdir(), "rem-google-cache-"));
+  vi.stubEnv("REM_CACHE_DIR", cacheDir);
+  vi.stubEnv("REM_NO_CACHE", "1");
   vi.stubEnv("REM_BIGQUERY_PROJECT_ID", "test-project");
   vi.stubEnv("REM_CONFIG_DIR", "/nonexistent/rem-test-config");
   mocks.query.mockReset();
@@ -29,7 +37,7 @@ describe("official Google ads collection", () => {
     mocks.query.mockResolvedValue([[{ total: "150", shownLast30d: "120", dated: "150", sample: [{ advertiser_id: advertiserId, creative_id: "CR1", advertiser_disclosed_name: "Example", ad_format_type: "TEXT", creative_page_url: `https://adstransparency.google.com/advertiser/${advertiserId}/creative/CR1`, first_shown: "2024-01-01", last_shown: "2026-11-14", regions_json: "[]", audience_json: "null" }] }]]);
     await collectPaid(ctx);
     expect(ctx.store.bySource("google_ads")[0]).toMatchObject({ data: { provider: "google_bigquery", scope: "EEA and Turkey", totalInScope: "150", shownLast30d: "120", advertiserIds: [advertiserId] } });
-    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ location: "US", useLegacySql: false, maximumBytesBilled: "1073741824", params: { advertiserIds: [advertiserId] } }));
+    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ location: "US", useLegacySql: false, maximumBytesBilled: "1073741824", params: expect.objectContaining({ advertiserIds: [advertiserId], asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }) }));
     expect(ctx.content).toHaveLength(1);
     expect(ctx.content[0]?.status).toBeUndefined();
     expect(ctx.content[0]?.thumb).toBeUndefined();
@@ -72,14 +80,14 @@ describe("official Google ads collection", () => {
     mocks.query.mockResolvedValue([[{ total: "0", shownLast30d: "0", dated: "0", sample: null }]]);
     const result = await reverseEngineer("example.com", { only: ["paid"], googleAdvertiserIds: [advertiserId] });
     expect(result.evidence.find(e => e.source === "google_ads")).toBeDefined();
-    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ params: { advertiserIds: [advertiserId] } }));
+    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ advertiserIds: [advertiserId], asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }) }));
   });
   it("uses the original-domain mapping after a website redirect, but never another domain's IDs", async () => {
     mocks.config = { googleAdvertisers: { "example.com": [advertiserId] } };
     mocks.query.mockResolvedValue([[{ total: "0", shownLast30d: "0", dated: "0", sample: null }]]);
     const ctx = context(); ctx.target.domain = "example.org"; ctx.target.aliases = ["example.com"];
     await collectPaid(ctx);
-    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ params: { advertiserIds: [advertiserId] } }));
+    expect(mocks.query).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ advertiserIds: [advertiserId], asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }) }));
     mocks.query.mockClear(); ctx.target.aliases = []; await collectPaid(ctx);
     expect(mocks.query).not.toHaveBeenCalled();
   });
@@ -140,6 +148,19 @@ describe("official Google ads collection", () => {
         expect(ctx.store.bySource("google_ads")[0]).toMatchObject({ data: { sample: [{ audience_selection: null, regions: [] }] } });
       }
     }
+  });
+
+  it("reuses a locally persisted snapshot without a second query or ADC project", async () => {
+    vi.stubEnv("REM_NO_CACHE", "");
+    const make = () => Object.assign(context(), { googleAdvertiserIds: [advertiserId] });
+    mocks.query.mockResolvedValue([[{ total: "1", dated: "1", shownLast30d: "1", sample: [{ advertiser_id: advertiserId, creative_id: "CR1", creative_page_url: `https://adstransparency.google.com/advertiser/${advertiserId}/creative/CR1` }] }]]);
+    const first = make(); await collectPaid(first);
+    vi.stubEnv("REM_BIGQUERY_PROJECT_ID", ""); vi.stubEnv("GOOGLE_CLOUD_PROJECT", "");
+    const second = make(); await collectPaid(second);
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+    expect(second.store.bySource("google_ads")[0]).toMatchObject({ data: { totalInScope: "1", snapshot: { cacheHit: true, asOfDate: expect.any(String), fetchedAt: expect.any(String) } } });
+    expect(second.content).toEqual(first.content);
+    expect(scorecard(second.store).find(c => c.channel === "paid_google")?.signal).toContain(`as of ${new Date().toISOString().slice(0,10)}`);
   });
 
 });

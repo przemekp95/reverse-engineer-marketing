@@ -27,6 +27,7 @@ Usage
   rem mcp                   run the MCP server (stdio) for Claude Code, Codex, Cursor…
   rem google-estimate <AR…> [AR…]  estimate Google scan bytes without executing the query
   rem google-link <domain> <AR…> [AR…]  save verified Google advertiser IDs for this domain
+  rem google-fetch <domain> [domain…]  jointly fetch and locally save Google ads for competitors
   rem doctor                show which sources your keys unlock
   rem setup                 connect REM to Claude Code / Codex (shows the plan, asks first)
   rem diff <domain>         what changed since the previous run (or: rem diff <runA> <runB>)
@@ -43,7 +44,9 @@ Options
   --max-credits <n>         Scrape Creators budget per run (default 50)
   --port <n>                web app port (default 4321)
   --client <list>           setup: claude_code,codex (default: all detected)
-  --dry-run / --yes         setup: only show the plan / apply without asking
+  --dry-run                 google-fetch: estimate without executing or writing; setup: show plan
+  --refresh                 google-fetch: bypass local snapshots and fetch fresh data
+  --yes                     setup: apply without asking
   --no-open                 don't open the browser for rem web
   -q, --quiet               no progress output
 
@@ -80,6 +83,16 @@ async function main(argv: string[]): Promise<number> {
       const estimate = await estimateGoogleAdsScan(ids);
       console.log(JSON.stringify({ dryRun: true, ...estimate, note: "No ad query executed. Raising the cap can incur BigQuery charges after the free tier is exhausted." }, null, 2));
     } catch { throw new Error("Google BigQuery estimate failed. Check project, ADC, BigQuery API, IAM, advertiser IDs and byte-cap configuration."); }
+    return 0;
+  }
+  if (cmd === "google-fetch") {
+    const domains = args._.slice(1);
+    if (!domains.length) throw new Error("usage: rem google-fetch <domain> [domain…] [--dry-run] [--refresh]");
+    try {
+      const { prefetchGoogleAds } = await import("./sources/google-ads-fetch.js");
+      const result = await prefetchGoogleAds(domains, { dryRun: Boolean(args["dry-run"]), refresh: Boolean(args.refresh) });
+      console.log(JSON.stringify(result, null, 2));
+    } catch { throw new Error("Google BigQuery fetch failed. Check saved google-link mappings, project, ADC, IAM, byte cap and local cache permissions."); }
     return 0;
   }
   if (cmd === "google-link") {
@@ -198,7 +211,7 @@ interface Args {
 
 function parseArgs(argv: string[]): Args {
   const out: Args = { _: [] };
-  const flags = new Set(["no-ai", "json", "quiet", "help", "version", "no-open", "yes", "dry-run"]);
+  const flags = new Set(["no-ai", "json", "quiet", "help", "version", "no-open", "yes", "dry-run", "refresh"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "-q") out.quiet = true;
