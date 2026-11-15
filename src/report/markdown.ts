@@ -81,6 +81,7 @@ export function renderMarkdown(bundle: EvidenceBundle, opts: { narrative?: strin
     "",
     section("Website, offer & funnel", ["website", "tracking"]),
     section("Paid", ["meta_ads", "google_ads", "linkedin_ads", "apple_ads", "reddit_ads"]),
+    section("Keyword market research", ["keyword_research"]),
     section("Organic social", ["tiktok", "instagram", "youtube", "x", "linkedin", "threads"]),
     section("SEO & AI search", ["seo"]),
     section("Founders & people", ["founders", "wikidata"]),

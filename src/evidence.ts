@@ -12,6 +12,7 @@ export type SourceName =
   | "appstore"
   | "meta_ads"
   | "google_ads"
+  | "keyword_research"
   | "linkedin_ads"
   | "reddit_ads"
   | "tiktok"

@@ -1,3 +1,4 @@
+import { researchKeywords, type KeywordResearchOptions } from "./keywords/index.js";
 import { scorecard, type ChannelScore } from "./analyze/scorecard.js";
 import { runSource, skip, type Ctx } from "./context.js";
 import { EvidenceStore, type ContentItem, type Evidence, type SourceRun, type Unknown } from "./evidence.js";
@@ -33,6 +34,8 @@ export interface RunOptions {
   /** Limit to some areas (website always runs: it discovers handles for the rest). */
   only?: Area[];
   maxCredits?: number;
+  /** Explicit opt-in market keyword ideas; never treated as competitor campaign settings. */
+  keywordResearch?: KeywordResearchOptions;
   /** Selected advertiser identities for this target; official Google BigQuery, EEA/Turkey only. */
   googleAdvertiserIds?: string[];
   /** Override discovered handles, e.g. { tiktok: "notionhq" }. */
@@ -107,6 +110,16 @@ export async function reverseEngineer(input: string, opts: RunOptions = {}): Pro
     }),
   );
 
+  if (opts.keywordResearch) {
+    log("→ Google keyword research");
+    try {
+      const research = await researchKeywords({ ...opts.keywordResearch, url: opts.keywordResearch.url ?? target.url });
+      store.add({ source: "keyword_research", kind: "observation", title: `Google keyword market research: ${research.keywords.length} ideas as of ${research.fetchedAt.slice(0,10)}; not competitor campaign settings`, url: "https://ads.google.com/aw/keywordplanner/home", data: research });
+    } catch {
+      store.unknown({ channel: "keyword_research", reason: "Google keyword research unavailable. Run rem keywords-check to verify planning access and configuration; no paid intermediary or substitute data was used.", manualCheck: "https://console.cloud.google.com/google/ads-apis/overview" });
+    }
+  }
+
   const harness = loadHarness();
   const logos = rankLogos(ctx.found.logos, target.domain);
   return {
@@ -139,3 +152,6 @@ export type { Evidence, Unknown } from "./evidence.js";
 
 export { prefetchGoogleAds } from "./sources/google-ads-fetch.js";
 export type { GoogleAdsPrefetchResult } from "./sources/google-ads-fetch.js";
+
+export { researchKeywords, checkKeywordAccess } from "./keywords/index.js";
+export type { KeywordResearchOptions, KeywordResearchResult } from "./keywords/index.js";

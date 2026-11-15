@@ -24,6 +24,14 @@
 > The original examples below using the published npm package describe upstream;
 > use `node dist/cli.js` instead after building this fork.
 
+> **This fork also has direct Google keyword research, without a paid intermediary.**
+> Use `node dist/cli.js keywords-check` to test planning access, then
+> `node dist/cli.js keywords "oprogramowanie CRM"` for ideas and market metrics.
+> Google Ads API credentials and planning permission are required; BigQuery access
+> does not grant them. The live check on 2026-11-15 was blocked by Google with
+> `DEVELOPER_TOKEN_NOT_APPROVED`; live keyword collection is not yet verified.
+> [Setup, report integration and access requirements](docs/google-keywords.md).
+
 ---
 
 Nobody shares their growth alpha anymore. But most of it is public if you know where to look: ad libraries show which ads have been running for months (the winners), pixels show which platforms they buy, sitemaps show programmatic SEO, Wayback shows every repositioning, and founders post their playbook in public.
@@ -98,6 +106,7 @@ Subscription engines run the CLI you're already logged into. REM strips `ANTHROP
 |---|---|---|
 | **Paid: Meta** | All ads incl. paused campaigns, active count, most-shown ads, ads launched in the last 30 days, **longest-running active ads (the proven winners)** with hooks, formats, CTAs, landing pages, UTM campaign names, variant counts | Scrape Creators |
 | **Paid: Google** | Selected advertiser IDs: scoped counts, formats, dates, public creative links and sampled regional impression ranges/audience categories; **EEA/Turkey only**, no destination-domain lookup | Official Google BigQuery ([setup](docs/google-bigquery.md)) |
+| **Keyword planning (opt-in)** | Google keyword ideas, search-volume history, advertiser competition and bid/CPC metrics when available; proposals and market estimates, not a competitor's actual campaign settings | Direct Google Ads API with planning access ([setup](docs/google-keywords.md)) |
 | **Paid: LinkedIn** | Ads by the company, ad types, headlines, CTAs | Scrape Creators |
 | **Paid: Apple Search Ads** | From Apple's public Ad Repository (EU): App Store ads over the last year, how many still serve, placements, formats, the message each ad shows, markets, audience targeting, and **copycat apps advertising under the same name** | Free |
 | **App Store link forensics** | In Meta ads that point at the App Store: custom product pages (`ppid`), campaign tokens (`ct`/`pt`), attribution parameters | Scrape Creators |

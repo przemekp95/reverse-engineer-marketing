@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { researchKeywords, checkKeywordAccess } from "./keywords/index.js";
 import { synthesize } from "./analyze/synthesize.js";
 import { loadHarness, playbook } from "./harness.js";
 import { AREAS, reverseEngineer, VERSION, type EvidenceBundle } from "./index.js";
@@ -20,6 +21,25 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: "reverse-engineer-marketing", version: VERSION });
+
+  server.registerTool("research_keywords", {
+    title: "Research Google keyword market data",
+    description: "Direct Google Ads keyword ideas, search volumes and market bid ranges. No paid intermediary. Requires approved planning access. These are suggestions/market metrics, not a competitor's actual keywords, CPC, budget or CPL. Uses a dated local cache.",
+    inputSchema: {
+      keywords: z.array(z.string().min(1).max(80)).min(1).max(20).optional(),
+      url: z.string().url().optional(), customer_id: z.string().optional(),
+      language_id: z.string().regex(/^\d+$/).optional(), geo_target_ids: z.array(z.string().regex(/^\d+$/)).min(1).max(10).optional(),
+      limit: z.number().int().min(1).max(1000).optional(), refresh: z.boolean().optional(),
+    },
+  }, async ({ keywords, url, customer_id, language_id, geo_target_ids, limit, refresh }) => {
+    try { return text(JSON.stringify(await researchKeywords({keywords,url,customerId:customer_id,languageId:language_id,geoTargetIds:geo_target_ids,limit,refresh}),null,1)); }
+    catch { return { ...text("Google keyword research unavailable. Run check_keyword_access; verify planning access and request parameters. No substitute data was used."), isError:true }; }
+  });
+  server.registerTool("check_keyword_access", {
+    title: "Check Google keyword-planning access",
+    description: "Run a tiny uncached read-only planning request to verify actual API access. Does not create campaigns or write research snapshots.",
+    inputSchema: { customer_id:z.string().optional() },
+  }, async ({customer_id}) => text(JSON.stringify(await checkKeywordAccess({customerId:customer_id}),null,1)));
 
   server.registerTool(
     "reverse_engineer_marketing",
