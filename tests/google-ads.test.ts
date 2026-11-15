@@ -101,4 +101,15 @@ describe("official Google ads collection", () => {
     expect(scorecard(ctx.store).find(c => c.channel === "paid_google")?.status).toBe("unknown");
   });
 
+  it("keeps report facts and excludes bulky regional and audience payloads from evidence", async () => {
+    const ctx = context(); Object.assign(ctx, { googleAdvertiserIds: [advertiserId] });
+    const facts = { advertiser_id: advertiserId, creative_id: "CR1", advertiser_disclosed_name: "Example", advertiser_legal_name: "Example Ltd", ad_format_type: "TEXT", creative_page_url: `https://adstransparency.google.com/advertiser/${advertiserId}/creative/CR1`, first_shown: "2024-01-01", last_shown: "2024-02-01" };
+    mocks.query.mockResolvedValue([[{ total: "1", shownLast30d: "0", dated: "1", sample: [{ ...facts, regions_json: "large regional payload", audience_json: "large audience payload", extra_field: "not needed by the report" }] }]]);
+    await collectPaid(ctx);
+    expect(ctx.store.bySource("google_ads")[0]).toMatchObject({ data: { totalInScope: "1", withLastShownDate: "1", sample: [facts] } });
+    const data = ctx.store.bySource("google_ads")[0]!.data as { sample: Record<string, unknown>[] };
+    expect(data.sample[0]).toEqual(facts);
+    expect(ctx.content[0]).toMatchObject({ url: facts.creative_page_url, author: "Example", date: "2024-01-01", tags: ["EEA and Turkey", "TEXT"] });
+  });
+
 });
